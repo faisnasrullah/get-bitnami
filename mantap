@@ -1,0 +1,72 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:       bitnami
+# Required-Start: $network $remote_fs
+# Required-Stop:  $network $remote_fs
+# Default-Start:  2 3 4 5
+# Default-Stop:   0 1 6
+# Short-Description: Bitnami Init Script
+# Description:  Bitnami Init Script
+### END INIT INFO
+
+#!/bin/sh
+
+RESULT=0
+
+export BITNAMI_SCRIPTS_DIR="/opt/bitnami/scripts"
+
+case "$1" in
+  start)
+    . "${BITNAMI_SCRIPTS_DIR}/init/functions"
+    clean_skip_bitnami_start
+
+    mkdir -p /opt/bitnami/var/log
+    # Initialization before services are started
+    (
+    for script in `find /opt/bitnami/var/init/pre-start -type l -executable | sort`; do
+      skip_bitnami_start_check && exit 0
+      log INFO "Running ${script}..."
+      $script 2>&1 || true
+    done
+    ) | tee /opt/bitnami/var/log/pre-start.log
+    chmod 0600 /opt/bitnami/var/log/pre-start.log
+
+    APP_PASSWORD=$(get_applications_password)
+    INSTANCE_ID=$(get_metadata "instance-id")
+    LOG_LEVEL=$(_get_parameter_from_user_data log_level info)
+
+    skip_bitnami_start_check && exit 0
+    if ( run_once_globally_check "first_boot" ); then
+      log INFO "Running first-boot..."
+      touch /opt/bitnami/var/log/first-boot.log
+      chmod 0600 /opt/bitnami/var/log/first-boot.log
+      /opt/bitnami/nami/bin/provisioner --provisioned \
+        --log-level "${LOG_LEVEL}" --app-password "${APP_PASSWORD}" --shared-unique-id-input "${INSTANCE_ID}" firstboot 2>&1 | \
+        tee /opt/bitnami/var/log/first-boot.log
+    fi
+
+    log INFO "Starting services..."
+    /opt/bitnami/nami/bin/provisioner --provisioned --log-level "${LOG_LEVEL}" start
+    RESULT=$?
+
+    # Initialization after services are started
+    (
+    for script in `find /opt/bitnami/var/init/post-start -type l -executable | sort`; do
+      log INFO "Running ${script}..."
+      $script 2>&1 || true
+    done
+    ) | tee /opt/bitnami/var/log/post-start.log
+    chmod 0600 /opt/bitnami/var/log/post-start.log
+
+    if [ ! -f  /opt/bitnami/var/init/bitnami_first_boot_finished ]; then
+      touch /opt/bitnami/var/init/bitnami_first_boot_finished
+    fi
+    ;;
+  *)
+    . "${BITNAMI_SCRIPTS_DIR}/init/functions"
+    LOG_LEVEL=$(_get_parameter_from_user_data log_level info)
+    exec /opt/bitnami/nami/bin/provisioner --provisioned --log-level "${LOG_LEVEL}" "$@"
+    ;;
+esac
+
+exit $RESULT
